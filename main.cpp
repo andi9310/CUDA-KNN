@@ -7,7 +7,6 @@
 
 int main(int argc, char ** argv)
 {
-
 	MPI_Init(&argc, &argv);
 	cuda_knn();
 	std::cout << "ok"; 
