@@ -1,18 +1,9 @@
-#include <iostream>
-
-
 __global__ void classify(int * teached)
 {
 
 }
 
-
-
-int main()
+void cuda_knn()
 {
-
 	classify<<<100,100>>>(NULL);
-	std::cout << "ok"; 
-
-
 }
