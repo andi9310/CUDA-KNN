@@ -42,8 +42,9 @@ int main(int argc, char ** argv)
 		}
 		// to this moment - deffinition of collection to classify
 	
-	
-	cuda_knn(dimensions, teachingCollection, teachedClasses, teachingCollectionCount, classifyCollection, classifiedClasses, classifyCollectionCount);
+	int N;
+	std::cin >> N;
+	cuda_knn(N, dimensions, teachingCollection, teachedClasses, teachingCollectionCount, classifyCollection, classifiedClasses, classifyCollectionCount);
 	
 	std::cout << "ok\n"; 
 

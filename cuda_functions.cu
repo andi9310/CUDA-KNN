@@ -24,9 +24,69 @@ __global__ void countDistances(int dimensions, float *teachingCollection, int te
 
 }
 
-void cuda_knn(int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount)
+__global__ void selectN(int N, float *distances, int teachingCollectionCount, int classifyCollectionCount, int *nearestIndexes, float *nearestDistances)
 {
-	int ierr;
+	int pointsInBlock;
+	if (blockIdx.x == gridDim.x-1)
+	{
+		pointsInBlock =  (gridDim.x * blockDim.x) % teachingCollectionCount;	
+	}
+	else
+	{
+		pointsInBlock = blockDim.x;
+	}
+	if (threadIdx.x < pointsInBlock)
+	{
+		int myRank = blockDim.x * blockIdx.x + threadIdx.x;
+		int *myNearestIndexes = nearestIndexes+N*myRank;
+		float *myNearestDistances = nearestDistances+N*myRank;
+		float *myDistances = distances + myRank * teachingCollectionCount;
+		for (int i=0; i<N; i++)
+		{
+			int j;
+			for (j=0; j<i; j++)
+			{
+				if (myDistances[i]<myNearestDistances[j]) //terrible nesting here
+				{
+					for (int k=N-1; k>j; k--)
+					{
+						myNearestDistances[k]=myNearestDistances[k-1];
+						myNearestIndexes[k]=myNearestIndexes[k-1];
+					}
+					myNearestDistances[j]=myDistances[i];
+					myNearestIndexes[j]=i;
+					break;
+				}
+			}
+			if (j==i)
+			{
+				myNearestDistances[j]=myDistances[i];
+				myNearestIndexes[j]=i;
+			}
+		}
+		for (int i=N; i<teachingCollectionCount;i++)
+		{
+			for (int j=0; j<i; j++)
+			{
+				if (myDistances[i]<myNearestDistances[j]) //terrible nesting here
+				{
+					for (int k=N-1; k>j; k--)
+					{
+						myNearestDistances[k]=myNearestDistances[k-1];
+						myNearestIndexes[k]=myNearestIndexes[k-1];
+					}
+					myNearestDistances[j]=myDistances[i];
+					myNearestIndexes[j]=i;
+					break;
+				}
+			}
+		}
+	}
+}
+
+void cuda_knn(int N, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount)
+{
+	cudaError_t ierr;
 	float *d_teachingCollection, *d_classifyCollection;
 	ierr = cudaMalloc(&d_teachingCollection, teachingCollectionCount*dimensions*sizeof(float));
 	ierr = cudaMalloc(&d_classifyCollection, classifyCollectionCount*dimensions*sizeof(float));
@@ -56,10 +116,19 @@ void cuda_knn(int dimensions, float *h_teachingCollection, int *h_teachedClasses
 			printf("%f\n", h_distances[i]);
 		}
 	#endif
+
+	float *d_nearestDistances;
+	int *d_nearestIndexes;
+	ierr = cudaMalloc(&d_nearestDistances, classifyCollectionCount*N*sizeof(float));
+	ierr = cudaMalloc(&d_nearestIndexes, classifyCollectionCount*N*sizeof(int));
 	
-	cudaFree(d_teachingCollection);
-	cudaFree(d_classifyCollection);
-	cudaFree(d_distances);
+	selectN<<<blocksPerGrid, threadsPerBlock>>>(N, d_distances, teachingCollectionCount, classifyCollectionCount, d_nearestIndexes, d_nearestDistances);
+	
+	ierr = cudaFree(d_nearestDistances);
+	ierr = cudaFree(d_nearestIndexes);
+	ierr = cudaFree(d_teachingCollection);
+	ierr = cudaFree(d_classifyCollection);
+	ierr = cudaFree(d_distances);
 	delete[] h_distances;
 
 }
