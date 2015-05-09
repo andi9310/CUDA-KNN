@@ -1,7 +1,24 @@
+#include <cmath>
 
 __global__ void countDistances(int dimensions, float *teachingCollection, int teachingCollectionCount, float *classifyCollection, int classifyCollectionCount, float *distances)
 {
+	int tId = blockIdx.x*blockDim.x+threadIdx.x;
+	int pointId = tId*dimensions;	
+	float distance;
 	
+	if(pointId >= classifyCollectionCount)
+		return;
+	
+	for(int i = 0; i < teachingCollectionCount; ++i)
+	{
+		for(int j = 0; j < dimensions; ++j)
+		{
+			distance += (classifyCollection[pointId+j]-teachingCollection[i+j])*(classifyCollection[pointId+j]-teachingCollection[i+j]);
+		}
+		distance = (float)sqrt(distance);
+		
+		distances[teachingCollectionCount*pointId+i] = distance;
+	}
 }
 
 void cuda_knn(int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount)
