@@ -10,7 +10,7 @@ __global__ void countDistances(int dimensions, float *teachingCollection, int te
 	if(pointId >= classifyCollectionCount)
 		return;
 	
-	for(int i = 0; i < teachingCollectionCount; ++i)
+	for(int i = 0; i < teachingCollectionCount; i+=dimensions)
 	{
 		float distance = 0.0f;
 		for(int j = 0; j < dimensions; ++j)
