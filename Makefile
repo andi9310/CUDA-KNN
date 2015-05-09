@@ -2,6 +2,7 @@ KNN_NUM_PROC?=1
 
 CPP_FILES=$(wildcard *.cpp)
 CU_FILES=$(wildcard *.cu)
+H_FILES=$(wildcard *.h)
 
 .PHONY: all
 all: build
@@ -15,13 +16,12 @@ knn.out: cuda_knn.o knn.o
 cuda_knn.o: $(CU_FILES)
 	nvcc -c *.cu -o cuda_knn.o
 
-knn.o: $(CPP_FILES)
+knn.o: $(CPP_FILES) $(H_FILES)
 	mpiCC -c *.cpp -o knn.o
 
 .PHONY: run
 run: build
-	LD_LIBRARY_PATH=/usr/local/cuda/lib64
-	mpirun -np $(KNN_NUM_PROC) ./knn.out
+	LD_LIBRARY_PATH=/usr/local/cuda/lib64 mpirun -np $(KNN_NUM_PROC) ./knn.out
 	
 .PHONY: clean
 clean: 
