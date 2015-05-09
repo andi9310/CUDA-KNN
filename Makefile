@@ -14,7 +14,7 @@ knn.out: cuda_knn.o knn.o
 	mpiCC knn.o cuda_knn.o -o knn.out -L/usr/local/cuda/lib64 -lcudart
 	
 cuda_knn.o: $(CU_FILES)
-	nvcc -c *.cu -o cuda_knn.o
+	nvcc -arch compute_20 -c *.cu -o cuda_knn.o
 
 knn.o: $(CPP_FILES) $(H_FILES)
 	mpiCC -c *.cpp -o knn.o
