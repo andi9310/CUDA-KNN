@@ -1,7 +1,7 @@
 
 __global__ void countDistances(int dimensions, float *teachingCollection, int teachingCollectionCount, float *classifyCollection, int classifyCollectionCount, float *distances)
 {
-	//compute :P
+	
 }
 
 void cuda_knn(int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount)
@@ -11,8 +11,8 @@ void cuda_knn(int dimensions, float *h_teachingCollection, int *h_teachedClasses
 	ierr = cudaMalloc(&d_teachingCollection, teachingCollectionCount*dimensions*sizeof(float));
 	ierr = cudaMalloc(&d_classifyCollection, classifyCollectionCount*dimensions*sizeof(float));
 
-	ierr = cudaMemcpy(d_teachingCollection, h_teachingCollection, teachingCollectionCount*dimensions, cudaMemcpyDeviceToHost);
-	ierr = cudaMemcpy(d_classifyCollection, h_classifyCollection, classifyCollectionCount*dimensions, cudaMemcpyDeviceToHost);
+	ierr = cudaMemcpy(d_teachingCollection, h_teachingCollection, teachingCollectionCount*dimensions, cudaMemcpyHostToDevice);
+	ierr = cudaMemcpy(d_classifyCollection, h_classifyCollection, classifyCollectionCount*dimensions, cudaMemcpyHostToDevice);
 
 	float *d_distances;
 	cudaMalloc(&d_distances, teachingCollectionCount*classifyCollectionCount*sizeof(float));
