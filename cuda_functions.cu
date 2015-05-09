@@ -23,4 +23,6 @@ void cuda_knn(int dimensions, float *h_teachingCollection, int *h_teachedClasses
 	countDistances<<<blocksPerGrid, threadsPerBlock>>>(dimensions, d_teachingCollection, teachingCollectionCount, d_classifyCollection, classifyCollectionCount, d_distances);
 	cudaFree(d_teachingCollection);
 	cudaFree(d_classifyCollection);
+	cudaFree(d_distances);
+
 }
