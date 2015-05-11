@@ -7,6 +7,9 @@
 #define CLASSIFY_DATA 1
 #define RESULT 2
 
+// Prints any MPI errors to stderr
+// input:
+// code - return code from MPI function
 void mpiCheckErrors(int code);
 
 int main(int argc, char ** argv)
@@ -62,6 +65,7 @@ int main(int argc, char ** argv)
 		std::cin >> K;
 	}
 	
+	// Root sends necessary parameters to all slaves
 	mpiCheckErrors(MPI_Bcast((void*)&dimensions, 1, MPI_INT, 0, MPI_COMM_WORLD));
 	mpiCheckErrors(MPI_Bcast((void*)&teachingCollectionCount, 1, MPI_INT, 0, MPI_COMM_WORLD));
 	mpiCheckErrors(MPI_Bcast((void*)&pointsPerProc, 1, MPI_INT, 0, MPI_COMM_WORLD));
@@ -73,9 +77,11 @@ int main(int argc, char ** argv)
 		teachedClasses = new int[teachingCollectionCount];
 	}
 
+	// Root sends input data to all slaves - space is allocated above
 	mpiCheckErrors(MPI_Bcast((void*)teachingCollection, teachingCollectionCount*dimensions, MPI_FLOAT, 0, MPI_COMM_WORLD));
 	mpiCheckErrors(MPI_Bcast((void*)teachedClasses, teachingCollectionCount, MPI_INT, 0, MPI_COMM_WORLD));
 
+	// Root sends parts of classifyCollection to each slave
 	if(myId == 0)
 	{	
 		myPointsCount = pointsPerProc+classifyCollectionCount%procCount;
@@ -84,6 +90,7 @@ int main(int argc, char ** argv)
 			mpiCheckErrors(MPI_Send(classifyCollection+(myPointsCount+(i-1)*pointsPerProc)*dimensions, pointsPerProc*dimensions, MPI_FLOAT, i, CLASSIFY_DATA, MPI_COMM_WORLD));
 		}		
 	}
+	// Slave recieves data to classify
 	else
 	{			
 		classifyCollection = new float[pointsPerProc*dimensions];
@@ -95,8 +102,10 @@ int main(int argc, char ** argv)
 		myPointsCount = pointsPerProc;
 	}
 	
+	// Calls function with actual computation on all nodes
 	cuda_knn(K, dimensions, teachingCollection, teachedClasses, teachingCollectionCount, classifyCollection, classifiedClasses, myPointsCount, threadsPerBlock);
 	
+	// Root recieves results from all slaves
 	if(myId == 0)
 	{
 		MPI_Status status;
@@ -113,11 +122,13 @@ int main(int argc, char ** argv)
 			std::cout << classifiedClasses[i] << '\n';
 		}
 	}
+	// Every slave sends back computed data
 	else
 	{
 		mpiCheckErrors(MPI_Send((void*)classifiedClasses, pointsPerProc, MPI_INT, 0, RESULT, MPI_COMM_WORLD));
 	}
 	
+	// Freeing memory
 	delete[] teachingCollection;
 	delete[] teachedClasses;		
 	delete[] classifiedClasses;
