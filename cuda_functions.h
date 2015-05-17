@@ -1,6 +1,8 @@
 #ifndef CUDA_KNN
 #define CUDA_KNN
 
+#include "datatypes.h"
+
 // Classifies collection of points into classes using KNN algorithm
 // input:
 // K - number of nearest points to get
@@ -15,4 +17,6 @@
 // h_classifiedClasses - pointer to an array, which will be populated with numbers of class each point was fitted into
 void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount, int threadsPerBlock);
 
+int getNumberOfGpus();
+void getGpusProperties(GpuProperties *properties);
 #endif

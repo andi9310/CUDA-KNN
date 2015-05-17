@@ -3,25 +3,89 @@
 
 #include "cuda_functions.h"
 #include "variables.h"
+#include "datatypes.h"
 
 #define CLASSIFY_DATA 1
 #define RESULT 2
+#define DEVICES_INFO 3
+#define FINISH 4
+
+struct computationPart
+{
+	int start;
+	int count;
+};
 
 // Prints any MPI errors to stderr
 // input:
 // code - return code from MPI function
 void mpiCheckErrors(int code);
 
+int getTotalMultiprocessors(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess);
+
 int main(int argc, char ** argv)
 {
 	mpiCheckErrors(MPI_Init(&argc, &argv));
-	
-	int threadsPerBlock = 100;
 	
 	int myId, procCount;
 	
 	mpiCheckErrors(MPI_Comm_rank(MPI_COMM_WORLD, &myId));
 	mpiCheckErrors(MPI_Comm_size(MPI_COMM_WORLD, &procCount));
+	
+	const int nitems=2;
+    int blocklengths[2] = {1,1};
+    MPI_Datatype types[2] = {MPI_INT, MPI_INT};
+    MPI_Datatype mpi_gpu_properties_type;
+	MPI_Aint offsets[2];
+
+    offsets[0] = offsetof(GpuProperties, memory);
+    offsets[1] = offsetof(GpuProperties, multiprocessors);
+	MPI_Type_create_struct(nitems, blocklengths, offsets, types, &mpi_gpu_properties_type);
+    MPI_Type_commit(&mpi_gpu_properties_type);
+	
+	GpuProperties **processesGpuProperties = NULL;
+	int * gpusPerProcess = NULL;
+	if (myId == 0)
+	{		
+		processesGpuProperties = new GpuProperties*[procCount];
+		processesGpuProperties[0] = NULL;
+		gpusPerProcess = new int[procCount];
+		gpusPerProcess[0] = 0;
+		
+		MPI_Status status;
+		for(int i = 1; i < procCount; ++i)
+		{
+			mpiCheckErrors(MPI_Probe(MPI_ANY_SOURCE, DEVICES_INFO, MPI_COMM_WORLD, &status));
+			int num;
+			mpiCheckErrors(MPI_Get_count(&status, mpi_gpu_properties_type, &num));
+			processesGpuProperties[status.MPI_SOURCE] = new GpuProperties[num];
+			gpusPerProcess[status.MPI_SOURCE] = num;
+			mpiCheckErrors(MPI_Recv(processesGpuProperties[status.MPI_SOURCE], num, mpi_gpu_properties_type, status.MPI_SOURCE, DEVICES_INFO, MPI_COMM_WORLD, &status));
+			
+		}
+		for (int i=1; i<procCount;i++)
+		{
+			std::cout << "Process " << i << ": ";
+			for (int j=0; j<gpusPerProcess[i]; j++)
+			{
+				std::cout << "card " << j << ": memory: " << processesGpuProperties[i][j].memory << " multiprocessors: " << processesGpuProperties[i][j].multiprocessors << std::endl;
+			}
+		}
+	}
+	else
+	{
+		int numGpus = getNumberOfGpus();
+		GpuProperties *properties = new GpuProperties[numGpus];
+		getGpusProperties(properties);
+		mpiCheckErrors(MPI_Send(properties, numGpus, mpi_gpu_properties_type, 0, DEVICES_INFO, MPI_COMM_WORLD));
+		
+		delete[] properties;
+	}
+	
+	int maxThreadsPerMultiProcessor = 1000; //not a cuda parameter really - just a variable which will be used as multiplier for assignment of parts of work to processes
+	
+	int threadsPerBlock = 100;
+	
 	
 	int pointsPerProc, myPointsCount;	
 	int dimensions, teachingCollectionCount, K, classifyCollectionCount;
@@ -81,58 +145,99 @@ int main(int argc, char ** argv)
 	mpiCheckErrors(MPI_Bcast((void*)teachingCollection, teachingCollectionCount*dimensions, MPI_FLOAT, 0, MPI_COMM_WORLD));
 	mpiCheckErrors(MPI_Bcast((void*)teachedClasses, teachingCollectionCount, MPI_INT, 0, MPI_COMM_WORLD));
 
+	int sent = 0;
+	
 	// Root sends parts of classifyCollection to each slave
 	if(myId == 0)
 	{	
-		myPointsCount = pointsPerProc+classifyCollectionCount%procCount;
+		computationPart * parts = new computationPart[procCount];
 		for(int i = 1; i < procCount; ++i)
 		{
-			mpiCheckErrors(MPI_Send(classifyCollection+(myPointsCount+(i-1)*pointsPerProc)*dimensions, pointsPerProc*dimensions, MPI_FLOAT, i, CLASSIFY_DATA, MPI_COMM_WORLD));
-		}		
-	}
-	// Slave recieves data to classify
-	else
-	{			
-		classifyCollection = new float[pointsPerProc*dimensions];
+			int toSend = getTotalMultiprocessors(i, processesGpuProperties, gpusPerProcess) * maxThreadsPerMultiProcessor;
+			if (classifyCollectionCount-sent < toSend)
+			{
+				toSend = classifyCollectionCount-sent;
+			}
+			if (toSend == 0)
+			{
+				//TODO: jakoś to obsłużyć że mamy za małe dane do liczby procesów
+			}
+			mpiCheckErrors(MPI_Send(classifyCollection+sent*dimensions, toSend*dimensions, MPI_FLOAT, i, CLASSIFY_DATA, MPI_COMM_WORLD));
+			parts[i].start = sent;
+			sent += toSend;
+			parts[i].count = toSend;
+		}	
 		
-		mpiCheckErrors(MPI_Recv((void*)classifyCollection, pointsPerProc*dimensions, MPI_FLOAT, 0, CLASSIFY_DATA, MPI_COMM_WORLD, NULL));
-		
-		classifiedClasses = new int[pointsPerProc];
-		
-		myPointsCount = pointsPerProc;
-	}
-	
-	// Calls function with actual computation on all nodes
-	cuda_knn(K, dimensions, teachingCollection, teachedClasses, teachingCollectionCount, classifyCollection, classifiedClasses, myPointsCount, threadsPerBlock);
-	
-	// Root recieves results from all slaves
-	if(myId == 0)
-	{
 		MPI_Status status;
-		for(int i = 1; i < procCount; ++i)
+		while (sent < classifyCollectionCount)
 		{
 			mpiCheckErrors(MPI_Probe(MPI_ANY_SOURCE, RESULT, MPI_COMM_WORLD, &status));
-			int *location = classifiedClasses+myPointsCount+(status.MPI_SOURCE-1)*pointsPerProc;
-			mpiCheckErrors(MPI_Recv((void*)location, pointsPerProc, MPI_INT, MPI_ANY_SOURCE, RESULT, MPI_COMM_WORLD, &status));
-			
+			int source = status.MPI_SOURCE;
+			int *location = classifiedClasses + parts[source].start;
+			mpiCheckErrors(MPI_Recv(location, parts[source].count, MPI_INT, MPI_ANY_SOURCE, RESULT, MPI_COMM_WORLD, &status));
+			int toSend = getTotalMultiprocessors(source, processesGpuProperties, gpusPerProcess) * maxThreadsPerMultiProcessor;
+			if (classifyCollectionCount-sent < toSend)
+			{
+				toSend = classifyCollectionCount-sent;
+			}
+			mpiCheckErrors(MPI_Send(classifyCollection+(sent)*dimensions, toSend*dimensions, MPI_FLOAT, source, CLASSIFY_DATA, MPI_COMM_WORLD));
+			parts[source].start = sent;
+			sent += toSend;
+			parts[source].count = toSend;
+		}
+		for (int i=1; i<procCount; i++)
+		{
+			mpiCheckErrors(MPI_Probe(MPI_ANY_SOURCE, RESULT, MPI_COMM_WORLD, &status));
+			int source = status.MPI_SOURCE;
+			int *location = classifiedClasses + parts[source].start;
+			mpiCheckErrors(MPI_Recv(location, parts[source].count, MPI_INT, MPI_ANY_SOURCE, RESULT, MPI_COMM_WORLD, &status));
+			mpiCheckErrors(MPI_Send(NULL, 0, MPI_INT, source, FINISH, MPI_COMM_WORLD));
 		}
 		std::cout << "\n\nresult:\n";
 		for(int i = 0; i < classifyCollectionCount; ++i)
 		{
 			std::cout << classifiedClasses[i] << '\n';
 		}
+		delete[] classifiedClasses;
+		delete[] classifyCollection;
 	}
-	// Every slave sends back computed data
 	else
-	{
-		mpiCheckErrors(MPI_Send((void*)classifiedClasses, pointsPerProc, MPI_INT, 0, RESULT, MPI_COMM_WORLD));
+	{			
+		while (true)
+		{
+			MPI_Status status;
+			mpiCheckErrors(MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status));
+			if (status.MPI_TAG == FINISH)
+			{
+				mpiCheckErrors(MPI_Recv(NULL, 0, MPI_INT, 0, FINISH, MPI_COMM_WORLD, NULL));
+				break;
+			}
+			else if (status.MPI_TAG == CLASSIFY_DATA)
+			{
+				int count;
+				mpiCheckErrors(MPI_Get_count(&status, MPI_FLOAT, &count));
+				
+				classifyCollection = new float[count];
+				mpiCheckErrors(MPI_Recv(classifyCollection, count, MPI_FLOAT, 0, CLASSIFY_DATA, MPI_COMM_WORLD, NULL));
+
+				classifiedClasses = new int[count/dimensions];
+				
+					// Calls function with actual computation on all nodes
+				cuda_knn(K, dimensions, teachingCollection, teachedClasses, teachingCollectionCount, classifyCollection, classifiedClasses, count/dimensions, threadsPerBlock);
+			
+				mpiCheckErrors(MPI_Send(classifiedClasses, count/dimensions, MPI_INT, 0, RESULT, MPI_COMM_WORLD));
+
+				delete[] classifyCollection;
+				delete[] classifiedClasses;
+			}
+		}
+
 	}
 	
 	// Freeing memory
 	delete[] teachingCollection;
 	delete[] teachedClasses;		
-	delete[] classifiedClasses;
-	delete[] classifyCollection;
+
 	
 	mpiCheckErrors(MPI_Finalize());
 }
@@ -142,3 +247,14 @@ void mpiCheckErrors(int code)
 	if(code)
 		std::cerr << "MPI error no.: " << code << "\n";
 }
+
+int getTotalMultiprocessors(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess)
+{
+	int total = 0;
+	for (int i=0; i<gpusPerProcess[n];i++)
+	{
+		total+= processesGpuProperties[n][i].multiprocessors;
+	}
+	return total;
+}
+

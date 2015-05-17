@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "variables.h"
+#include "datatypes.h"
 
 #ifdef DEBUG
 	#include <cstdio>
@@ -16,6 +17,43 @@ void cudaCheckErrors(int code)
 {
 	if(code)
 		std::cerr << "CUDA error no.: " << code << "\n";
+}
+
+int getNumberOfGpus()
+{
+	int n;
+	cudaCheckErrors(cudaGetDeviceCount(&n));
+	return n;
+}
+
+void getGpusProperties(GpuProperties *properties)
+{
+	int n = getNumberOfGpus();
+	for (int i=0; i<n; i++)
+	{
+		cudaDeviceProp prop;
+		cudaCheckErrors(cudaGetDeviceProperties(&prop, i));
+		
+		properties[i].memory = prop.totalGlobalMem;
+		properties[i].multiprocessors = prop.multiProcessorCount;
+	}
+}
+
+
+void printCudaMem()
+{
+	    size_t free_byte ;
+
+        size_t total_byte ;
+
+        cudaCheckErrors(cudaMemGetInfo( &free_byte, &total_byte ));
+        double free_db = (double)free_byte ;
+
+        double total_db = (double)total_byte ;
+
+        double used_db = total_db - free_db ;
+
+        std::cout << "GPU memory usage: used = " << used_db/1024.0/1024.0 << ", free = " << free_db/1024.0/1024.0 << " MB, total = " << total_db/1024.0/1024.0 << " MB\n";
 }
 
 // Finds slots for numbers in given array (ascending) and puts them there (sorting)
@@ -178,7 +216,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 	
 	// Kernel launches
 	countDistances<<<blocksPerGrid, threadsPerBlock>>>(dimensions, d_teachingCollection, teachingCollectionCount, d_classifyCollection, classifyCollectionCount, d_distances);
-	
+
 	#ifdef DEBUG
 		float *h_distances = new float[teachingCollectionCount*classifyCollectionCount];
 		cudaCheckErrors(cudaMemcpy(h_distances, d_distances, teachingCollectionCount*classifyCollectionCount*sizeof(float), cudaMemcpyDeviceToHost)); // copy calculated distances back to host
@@ -188,9 +226,9 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 			printf("distance %f\n", h_distances[i]);
 		}
 	#endif
-	
+
 	selectN<<<blocksPerGrid, threadsPerBlock>>>(K, d_distances, teachingCollectionCount, classifyCollectionCount, d_nearestIndexes, d_nearestDistances);
-	
+
 	#ifdef DEBUG
 		float *h_nearestDistances = new float[classifyCollectionCount*K];
 		int *h_nearestIndexes = new int[classifyCollectionCount*K];
@@ -202,9 +240,9 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 			printf("nearest %d %f\n", h_nearestIndexes[i], h_nearestDistances[i]);
 		}
 	#endif	
-	
+
 	chooseClass<<<blocksPerGrid, threadsPerBlock>>>(K, d_nearestIndexes, classifyCollectionCount, d_teachedClasses, teachingCollectionCount, d_classCounters, d_result);
-	
+
 	// Copying result back to host memory
 	cudaCheckErrors(cudaMemcpy(h_classifiedClasses, d_result, classifyCollectionCount*sizeof(int), cudaMemcpyDeviceToHost));
 		
@@ -216,7 +254,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 			printf("counter %d\n", h_classCounters[i]);
 		}
 	#endif
-	
+			
 	// Freeing memory
 	cudaCheckErrors(cudaFree(d_nearestDistances));
 	cudaCheckErrors(cudaFree(d_nearestIndexes));
