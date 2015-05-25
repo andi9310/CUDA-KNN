@@ -15,8 +15,9 @@
 // threadsPerBlock - threads per CUDA block
 // output:
 // h_classifiedClasses - pointer to an array, which will be populated with numbers of class each point was fitted into
-void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount, int threadsPerBlock);
+void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount, int threadsPerBlock, int numOfGpus, int *subranges);
 
 int getNumberOfGpus();
 void getGpusProperties(GpuProperties *properties);
+
 #endif

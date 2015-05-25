@@ -1,5 +1,5 @@
-#ifndef VARIABLES_H
-#define VARIABLES_H
+#ifndef UTILS_H
+#define UTILS_H
 
 #define MAX_CLASS_NUMBER 100
 
