@@ -3,7 +3,7 @@
 
 #include <iostream>
 
-#include "variables.h"
+#include "utils.h"
 #include "datatypes.h"
 
 #ifdef DEBUG
@@ -92,7 +92,7 @@ __device__ int findSlot(float *myDistances, float *myNearestDistances, int *myNe
 // classifyCollectionCount - number of points in array mentioned above
 // output:
 // distances - pointer to an array, which will be populated with distances to every point
-__global__ void countDistances(int dimensions, float *teachingCollection, int teachingCollectionCount, float *classifyCollection, int classifyCollectionCount, float *distances)
+__global__ void countDistances(int dimensions, float *teachingCollection, int teachingCollectionCount, float *classifyCollection, int classifyCollectionCount, float *distances, int* nearestIndexes, float* nearestDistances, int K, int *classCounters, int *teachedClasses, int *result)
 {
 	int tId = blockIdx.x*blockDim.x+threadIdx.x;
 	int pointId = tId*dimensions;	
@@ -118,6 +118,41 @@ __global__ void countDistances(int dimensions, float *teachingCollection, int te
 		
 		distances[teachingCollectionCount*tId+i] = distance;
 	}
+	
+	int *myNearestIndexes = nearestIndexes+K*tId;
+	float *myNearestDistances = nearestDistances+K*tId;
+	float *myDistances = distances + tId * teachingCollectionCount;
+	
+	for (int i=0; i<K; i++)
+	{
+		int j = findSlot(myDistances, myNearestDistances, myNearestIndexes, K, i);
+		
+		if (j==i)
+		{
+			myNearestDistances[j]=myDistances[i];
+			myNearestIndexes[j]=i;
+		}
+	}
+	for (int i=K; i<teachingCollectionCount;i++)
+	{
+		findSlot(myDistances, myNearestDistances, myNearestIndexes, K, i);
+	}
+	
+	for(int i = 0; i < K; ++i)
+	{
+		classCounters[tId*MAX_CLASS_NUMBER+teachedClasses[nearestIndexes[i+pointId]]]++;
+	}
+
+	int maxIndex = 0, maxValue = classCounters[tId*MAX_CLASS_NUMBER];
+	for(int i = 1; i < MAX_CLASS_NUMBER; ++i)
+	{
+		if(classCounters[tId*MAX_CLASS_NUMBER+i] > maxValue)
+		{
+			maxIndex = i;
+			maxValue = classCounters[tId*MAX_CLASS_NUMBER+i];
+		}
+	}
+	result[tId] = maxIndex;
 }
 
 // Selects N-nearest points to a point from distances array
@@ -135,24 +170,7 @@ __global__ void selectN(int K, float *distances, int teachingCollectionCount, in
 	if(myRank >= classifyCollectionCount)
 		return;
 		
-	int *myNearestIndexes = nearestIndexes+K*myRank;
-	float *myNearestDistances = nearestDistances+K*myRank;
-	float *myDistances = distances + myRank * teachingCollectionCount;
 	
-	for (int i=0; i<K; i++)
-	{
-		int j = findSlot(myDistances, myNearestDistances, myNearestIndexes, K, i);
-		
-		if (j==i)
-		{
-			myNearestDistances[j]=myDistances[i];
-			myNearestIndexes[j]=i;
-		}
-	}
-	for (int i=K; i<teachingCollectionCount;i++)
-	{
-		findSlot(myDistances, myNearestDistances, myNearestIndexes, K, i);
-	}
 	
 }
 
@@ -174,21 +192,7 @@ __global__ void chooseClass(int K, int *nearestIndexes, int classifyCollectionCo
 	if(tId >= classifyCollectionCount)
 		return;
 
-	for(int i = 0; i < K; ++i)
-	{
-		classCounters[tId*MAX_CLASS_NUMBER+teachedClasses[nearestIndexes[i+pointId]]]++;
-	}
-
-	int maxIndex = 0, maxValue = classCounters[tId*MAX_CLASS_NUMBER];
-	for(int i = 1; i < MAX_CLASS_NUMBER; ++i)
-	{
-		if(classCounters[tId*MAX_CLASS_NUMBER+i] > maxValue)
-		{
-			maxIndex = i;
-			maxValue = classCounters[tId*MAX_CLASS_NUMBER+i];
-		}
-	}
-	result[tId] = maxIndex;
+	
 }
 
 void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount, int threadsPerBlock)
@@ -215,7 +219,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 	cudaCheckErrors(cudaMemcpy(d_teachedClasses, h_teachedClasses, teachingCollectionCount*sizeof(int), cudaMemcpyHostToDevice));
 	
 	// Kernel launches
-	countDistances<<<blocksPerGrid, threadsPerBlock>>>(dimensions, d_teachingCollection, teachingCollectionCount, d_classifyCollection, classifyCollectionCount, d_distances);
+	countDistances<<<blocksPerGrid, threadsPerBlock>>>(dimensions, d_teachingCollection, teachingCollectionCount, d_classifyCollection, classifyCollectionCount, d_distances, d_nearestIndexes, d_nearestDistances, K, d_classCounters, d_teachedClasses, d_result);
 
 	#ifdef DEBUG
 		float *h_distances = new float[teachingCollectionCount*classifyCollectionCount];
@@ -225,11 +229,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 		{
 			printf("distance %f\n", h_distances[i]);
 		}
-	#endif
 
-	selectN<<<blocksPerGrid, threadsPerBlock>>>(K, d_distances, teachingCollectionCount, classifyCollectionCount, d_nearestIndexes, d_nearestDistances);
-
-	#ifdef DEBUG
 		float *h_nearestDistances = new float[classifyCollectionCount*K];
 		int *h_nearestIndexes = new int[classifyCollectionCount*K];
 		cudaCheckErrors(cudaMemcpy(h_nearestDistances, d_nearestDistances, classifyCollectionCount*K*sizeof(float), cudaMemcpyDeviceToHost));	
@@ -240,8 +240,6 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 			printf("nearest %d %f\n", h_nearestIndexes[i], h_nearestDistances[i]);
 		}
 	#endif	
-
-	chooseClass<<<blocksPerGrid, threadsPerBlock>>>(K, d_nearestIndexes, classifyCollectionCount, d_teachedClasses, teachingCollectionCount, d_classCounters, d_result);
 
 	// Copying result back to host memory
 	cudaCheckErrors(cudaMemcpy(h_classifiedClasses, d_result, classifyCollectionCount*sizeof(int), cudaMemcpyDeviceToHost));
@@ -254,7 +252,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 			printf("counter %d\n", h_classCounters[i]);
 		}
 	#endif
-			
+
 	// Freeing memory
 	cudaCheckErrors(cudaFree(d_nearestDistances));
 	cudaCheckErrors(cudaFree(d_nearestIndexes));

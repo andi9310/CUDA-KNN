@@ -2,7 +2,7 @@
 #include <mpi.h>
 
 #include "cuda_functions.h"
-#include "variables.h"
+#include "utils.h"
 #include "datatypes.h"
 
 #define CLASSIFY_DATA 1
@@ -22,6 +22,7 @@ struct computationPart
 void mpiCheckErrors(int code);
 
 int getTotalMultiprocessors(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess);
+unsigned long long getTotalMemory(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess);
 
 int main(int argc, char ** argv)
 {
@@ -82,7 +83,7 @@ int main(int argc, char ** argv)
 		delete[] properties;
 	}
 	
-	int maxThreadsPerMultiProcessor = 1000; //not a cuda parameter really - just a variable which will be used as multiplier for assignment of parts of work to processes
+	int maxThreadsPerMultiProcessor = 200; //not a cuda parameter really - just a variable which will be used as multiplier for assignment of parts of work to processes
 	
 	int threadsPerBlock = 100;
 	
@@ -162,6 +163,18 @@ int main(int argc, char ** argv)
 			{
 				//TODO: jakoś to obsłużyć że mamy za małe dane do liczby procesów
 			}
+			
+			unsigned long memToAlloc = memoryToAllocSize(dimensions, teachingCollectionCount, toSend, K);
+			
+			std::cout << "00tu licze kurwa " << toSend << " " << memToAlloc << " " << getTotalMemory(i, processesGpuProperties, gpusPerProcess) << "\n";
+			while(memToAlloc > getTotalMemory(i, processesGpuProperties, gpusPerProcess)/2)
+			{
+				toSend *= 0.9;
+				memToAlloc = memoryToAllocSize(dimensions, teachingCollectionCount, toSend, K);
+				std::cout << "tu licze kurwa " << toSend << " " << memToAlloc << " " << getTotalMemory(i, processesGpuProperties, gpusPerProcess) << "\n";
+			}
+			
+			std::cout << "\n1111no tu wysylam se\n";
 			mpiCheckErrors(MPI_Send(classifyCollection+sent*dimensions, toSend*dimensions, MPI_FLOAT, i, CLASSIFY_DATA, MPI_COMM_WORLD));
 			parts[i].start = sent;
 			sent += toSend;
@@ -179,7 +192,16 @@ int main(int argc, char ** argv)
 			if (classifyCollectionCount-sent < toSend)
 			{
 				toSend = classifyCollectionCount-sent;
+			}						
+			unsigned long memToAlloc = memoryToAllocSize(dimensions, teachingCollectionCount, toSend, K);
+			std::cout << "2321tu licze kurwa " << toSend << " " << memToAlloc << " " << getTotalMemory(source, processesGpuProperties, gpusPerProcess) << "\n";
+			while(memToAlloc > getTotalMemory(source, processesGpuProperties, gpusPerProcess)/2)
+			{
+				toSend *= 0.9;
+				memToAlloc = memoryToAllocSize(dimensions, teachingCollectionCount, toSend, K);
+				std::cout << "tu l333icze kurwa " << toSend << " " << memToAlloc << " " << getTotalMemory(source, processesGpuProperties, gpusPerProcess) << "\n";
 			}
+			std::cout << "\nno tu wysylam se\n";
 			mpiCheckErrors(MPI_Send(classifyCollection+(sent)*dimensions, toSend*dimensions, MPI_FLOAT, source, CLASSIFY_DATA, MPI_COMM_WORLD));
 			parts[source].start = sent;
 			sent += toSend;
@@ -258,3 +280,12 @@ int getTotalMultiprocessors(int n, GpuProperties **processesGpuProperties, int *
 	return total;
 }
 
+unsigned long long getTotalMemory(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess)
+{
+	unsigned long long total = 0;
+	for (int i=0; i<gpusPerProcess[n];i++)
+	{
+		total+= processesGpuProperties[n][i].memory;
+	}
+	return total;
+}
