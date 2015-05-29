@@ -10,14 +10,17 @@ all: build
 .PHONY: build
 build: knn.out
 
-knn.out: cuda_knn.o knn.o
-	mpiCC knn.o cuda_knn.o -o knn.out -L/usr/local/cuda/lib64 -lcudart
+knn.out: cuda_knn.o knn.o utils.o
+	mpiCC knn.o cuda_knn.o utils.o -o knn.out -L/usr/local/cuda/lib64 -lcudart
 	
 cuda_knn.o: $(CU_FILES) $(H_FILES)
 	nvcc -arch sm_20 -c *.cu -o cuda_knn.o
 
-knn.o: $(CPP_FILES) $(H_FILES)
-	mpiCC -c *.cpp -o knn.o
+knn.o: main.cpp $(H_FILES)
+	mpiCC -c main.cpp -o knn.o
+
+utils.o: utils.cpp $(H_FILES)
+	mpiCC -c utils.cpp -o utils.o
 
 .PHONY: run
 run: build
