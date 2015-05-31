@@ -1,5 +1,5 @@
 //#define DEBUG
-//#define DEBUG_KERNEL
+#define DEBUG_KERNEL
 
 #include <iostream>
 
@@ -167,7 +167,6 @@ __global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachi
 	}	  
 	// Distances computed
 	
-	
 	if(tId >= classifyCollectionCount)
 	{
 		return;
@@ -282,7 +281,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 		cudaCheckErrors(cudaMemcpyAsync(d_teachedClasses[i], h_teachedClasses, teachingCollectionCount*sizeof(int), cudaMemcpyHostToDevice, streams[i]));
 		
 		// Kernel launches
-		KNN_kernel<<<blocksPerGrid, threadsPerBlock, threadsPerBlock * sizeof(float), streams[i]>>>(dimensions, d_teachingCollection[i], teachingCollectionCount, d_classifyCollection[i], subranges[i], d_distances[i], d_nearestIndexes[i], d_nearestDistances[i], K, d_classCounters[i], d_teachedClasses[i], d_result[i]);
+		KNN_kernel<<<blocksPerGrid, threadsPerBlock, threadsPerBlock * sizeof(float) * dimensions, streams[i]>>>(dimensions, d_teachingCollection[i], teachingCollectionCount, d_classifyCollection[i], subranges[i], d_distances[i], d_nearestIndexes[i], d_nearestDistances[i], K, d_classCounters[i], d_teachedClasses[i], d_result[i]);
 
 		// Copying result back to host memory
 		cudaCheckErrors(cudaMemcpyAsync(h_classifiedClasses+subrangesSum, d_result[i], subranges[i]*sizeof(int), cudaMemcpyDeviceToHost, streams[i]));
