@@ -17,7 +17,12 @@
 // h_classifiedClasses - pointer to an array, which will be populated with numbers of class each point was fitted into
 void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount, int threadsPerBlock, int numOfGpus, int *subranges);
 
+// Returns number of GPUs available on host
 int getNumberOfGpus();
+
+// Fetches properties (memory and number of multiprocessors of each GPU on host
+// output:
+// properties - array of GpuProperties structs with memory and multiprocessors info.
 void getGpusProperties(GpuProperties *properties);
 
 #endif

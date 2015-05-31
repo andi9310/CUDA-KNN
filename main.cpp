@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "datatypes.h"
 
+// MPI tags
 #define CLASSIFY_DATA 1
 #define RESULT 2
 #define DEVICES_INFO 3
@@ -24,7 +25,10 @@ struct computationPart
 // code - return code from MPI function
 void mpiCheckErrors(int code);
 
+// Function returning how many multiprocessors are available in all cards for given process
 int getTotalMultiprocessors(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess);
+
+// Function returning how much memory is available in all cards for given process
 unsigned long long getTotalMemory(int n, GpuProperties **processesGpuProperties, int * gpusPerProcess);
 
 int main(int argc, char ** argv)
@@ -36,12 +40,12 @@ int main(int argc, char ** argv)
 	mpiCheckErrors(MPI_Comm_rank(MPI_COMM_WORLD, &myId));
 	mpiCheckErrors(MPI_Comm_size(MPI_COMM_WORLD, &procCount));
 	
+	// MPI type definition
 	const int nitems = 2;
     int blocklengths[2] = {1, 1};
     MPI_Datatype types[2] = {MPI_INT, MPI_INT};
     MPI_Datatype mpi_gpu_properties_type;
 	MPI_Aint offsets[2];
-
     offsets[0] = offsetof(GpuProperties, memory);
     offsets[1] = offsetof(GpuProperties, multiprocessors);
 	MPI_Type_create_struct(nitems, blocklengths, offsets, types, &mpi_gpu_properties_type);
@@ -51,6 +55,15 @@ int main(int argc, char ** argv)
 	GpuProperties *properties;
 	int * gpusPerProcess = NULL;
 	
+	int maxThreadsPerMultiProcessor = 500; //not a cuda parameter really - just a variable which will be used as multiplier for assignment of parts of work to processes
+	int threadsPerBlock = 100;	
+	
+	int pointsPerProc, myPointsCount, sent=0;	
+	int dimensions, teachingCollectionCount, K, classifyCollectionCount;
+	int *classifiedClasses, *teachedClasses;
+	float *teachingCollection, *classifyCollection;	
+	
+	// Master fetching information about available GPUs from all processes and takes data from stdin
 	if (myId == 0)
 	{		
 		processesGpuProperties = new GpuProperties*[procCount];
@@ -78,27 +91,9 @@ int main(int argc, char ** argv)
 				}
 			}
 		#endif
-	}
-	else
-	{
-		int numGpus = getNumberOfGpus();
-		properties = new GpuProperties[numGpus];
-		getGpusProperties(properties);
-		mpiCheckErrors(MPI_Send(properties, numGpus, mpi_gpu_properties_type, 0, DEVICES_INFO, MPI_COMM_WORLD));		
-	}
-	
-	int maxThreadsPerMultiProcessor = 500; //not a cuda parameter really - just a variable which will be used as multiplier for assignment of parts of work to processes
-	
-	int threadsPerBlock = 100;	
-	
-	int pointsPerProc, myPointsCount;	
-	int dimensions, teachingCollectionCount, K, classifyCollectionCount;
-	
-	int *classifiedClasses, *teachedClasses;
-	float *teachingCollection, *classifyCollection;	
-	
-	if (myId == 0)
-	{
+		
+		// Starting getting data from stdin
+		
 		std::cin >> dimensions >> teachingCollectionCount;
 		
 		teachingCollection = new float[teachingCollectionCount*dimensions];
@@ -132,6 +127,13 @@ int main(int argc, char ** argv)
 
 		std::cin >> K;
 	}
+	else // Slaves sending information about their GPUs
+	{
+		int numGpus = getNumberOfGpus();
+		properties = new GpuProperties[numGpus];
+		getGpusProperties(properties);
+		mpiCheckErrors(MPI_Send(properties, numGpus, mpi_gpu_properties_type, 0, DEVICES_INFO, MPI_COMM_WORLD));		
+	}
 	
 	// Root sends necessary parameters to all slaves
 	mpiCheckErrors(MPI_Bcast((void*)&dimensions, 1, MPI_INT, 0, MPI_COMM_WORLD));
@@ -148,8 +150,6 @@ int main(int argc, char ** argv)
 	// Root sends input data to all slaves - space is allocated above
 	mpiCheckErrors(MPI_Bcast((void*)teachingCollection, teachingCollectionCount*dimensions, MPI_FLOAT, 0, MPI_COMM_WORLD));
 	mpiCheckErrors(MPI_Bcast((void*)teachedClasses, teachingCollectionCount, MPI_INT, 0, MPI_COMM_WORLD));
-
-	int sent = 0;
 	
 	// Root sends parts of classifyCollection to each slave
 	if(myId == 0)
@@ -157,14 +157,11 @@ int main(int argc, char ** argv)
 		computationPart * parts = new computationPart[procCount];
 		for(int i = 1; i < procCount; ++i)
 		{
+			// counting how much data can be sent to a given slave process
 			int toSend = getTotalMultiprocessors(i, processesGpuProperties, gpusPerProcess) * maxThreadsPerMultiProcessor;
 			if (classifyCollectionCount-sent < toSend)
 			{
 				toSend = classifyCollectionCount-sent;
-			}
-			if (toSend == 0)
-			{
-				//TODO: jakoś to obsłużyć że mamy za małe dane do liczby procesów
 			}
 			bool memoryCriterion = false;
 			unsigned long memToAlloc = memoryToAllocSize(dimensions, teachingCollectionCount, toSend, K);
@@ -176,6 +173,7 @@ int main(int argc, char ** argv)
 				memToAlloc = memoryToAllocSize(dimensions, teachingCollectionCount, toSend, K);
 			}
 			
+			// Sending data (classifyColelction)
 			mpiCheckErrors(MPI_Send(classifyCollection+sent*dimensions, toSend*dimensions, MPI_FLOAT, i, CLASSIFY_DATA, MPI_COMM_WORLD));
 			parts[i].start = sent;
 			sent += toSend;
@@ -184,6 +182,7 @@ int main(int argc, char ** argv)
 			int sum = 0;
 			int *subranges = new int[gpusPerProcess[i]];
 			
+			// sending information about how much of data should be computed by each GPU on slave process
 			if(memoryCriterion)
 			{
 				for(int j = 0; j < gpusPerProcess[i]-1; ++j)
@@ -208,6 +207,7 @@ int main(int argc, char ** argv)
 			delete[] subranges;
 		}	
 		
+		// Receiving parts of result from slaves and sending more data to them if needed
 		MPI_Status status;
 		while (sent < classifyCollectionCount)
 		{
@@ -288,12 +288,12 @@ int main(int argc, char ** argv)
 			MPI_Status status;
 			mpiCheckErrors(MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status));
 			
-			if (status.MPI_TAG == FINISH)
+			if (status.MPI_TAG == FINISH) // No more work
 			{
 				mpiCheckErrors(MPI_Recv(NULL, 0, MPI_INT, 0, FINISH, MPI_COMM_WORLD, NULL));
 				break;
 			}
-			else if (status.MPI_TAG == CLASSIFY_DATA)
+			else if (status.MPI_TAG == CLASSIFY_DATA) // slaves has something to compute
 			{
 				int count;
 				mpiCheckErrors(MPI_Get_count(&status, MPI_FLOAT, &count));

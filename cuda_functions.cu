@@ -9,6 +9,9 @@
 #ifdef DEBUG
 	#include <cstdio>
 #endif
+#ifdef DEBUG_KERNEL
+	#include <cstdio>
+#endif
 
 // Prints any CUDA errors to stderr
 // input:
@@ -39,6 +42,7 @@ void getGpusProperties(GpuProperties *properties)
 	}
 }
 
+// Prints info about memory usage on selectes (active) GPU
 void printCudaMem()
 {
 	    size_t free_byte ;
@@ -82,16 +86,22 @@ __device__ int findSlot(float *myDistances, float *myNearestDistances, int *myNe
 	return j;
 }
 
-// Counts distances between point from classifyCollection to points from teachingCollection
+// Classifies points from classifyCollection to classes given in teachedClasses using KNN algorithm
 // input:
 // dimensions - dimensionality of space
 // teachingCollection - pointer to an array, which represents points coordinates - each "dimensions" of elements represents one point (like vector) - teaching collection
 // teachingCollectionCount - number of points in arrays mentioned above
 // classifyCollection - pointer to an array, which represents points coordinates - each "dimensions" of elements represents one point (like vector) - classify collection
 // classifyCollectionCount - number of points in array mentioned above
+// K - number of nearest points to get
+// teachedClasses - pointer to an array, which represents classes of each point from teaching collection
+// distances - pointer to an array, which will be populated with distances to every point - array for temp data
+// nearestDistances - array of distances from distances array, which were chosen as the lowest - array for temp data
+// nearestIndexes - array of indexes from distances array, which were chosen as the lowest - array for temp data
+// classConters - temp array for counting how many of points chosen as nearest are in each class
 // output:
-// distances - pointer to an array, which will be populated with distances to every point
-__global__ void countDistances(int dimensions, float *teachingCollection, int teachingCollectionCount, float *classifyCollection, int classifyCollectionCount, float *distances, int *nearestIndexes, float *nearestDistances, int K, int *classCounters, int *teachedClasses, int *result)
+// result - pointer to an array, which will be populated with numbers of class each point was fitted into
+__global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachingCollectionCount, float *classifyCollection, int classifyCollectionCount, float *distances, int *nearestIndexes, float *nearestDistances, int K, int *classCounters, int *teachedClasses, int *result)
 {
 	int tId = blockIdx.x*blockDim.x+threadIdx.x;
 	int pointId = tId*dimensions;	
@@ -150,32 +160,11 @@ __global__ void countDistances(int dimensions, float *teachingCollection, int te
 	result[tId] = maxIndex;
 }
 
-// Selects N-nearest points to a point from distances array
-// input:
-// K - number of nearest points to get
-// distances - pointer to an array, which is populated with distances to every point
-// teachingCollectionCount - number of points in teaching collection
-// classifyCollectionCount - number of points in classify collection
-// output:
-// nearestIndexes - array of indices from distances array, wich were chosen as the lowest
-
-
-// Selects N-nearest points to a point from distances array
-// input:
-// K - number of nearest points to get
-// nearestIndexes - array of indices from distances array, wich were chosen as the lowest
-// distances - pointer to an array, which is populated with distances to every point
-// classifyCollectionCount - number of points in classify collection
-// teachedClasses - pointer to an array, which represents classes of each point from teaching collection
-// teachingCollectionCount - number of points in teaching collection
-// output:
-// result - pointer to an array, which will be populated with numbers of class each point was fitted into
-
-
 void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teachedClasses, int teachingCollectionCount, float *h_classifyCollection, int *h_classifiedClasses, int classifyCollectionCount, int threadsPerBlock, int numOfGpus, int *subranges)
 {
 	cudaStream_t *streams = new cudaStream_t[numOfGpus];
 	
+	// host memory allocation
     float **d_teachingCollection = new float*[numOfGpus], 
 		  **d_classifyCollection = new float*[numOfGpus], 
 		  **d_nearestDistances = new float*[numOfGpus], 
@@ -191,7 +180,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 		cudaSetDevice(i);
 		cudaStreamCreate(streams+i);		
 
-		// Memory allocation block
+		// Device memory allocation block
 
 		cudaCheckErrors(cudaMalloc(&d_teachingCollection[i], teachingCollectionCount*dimensions*sizeof(float)));
 		cudaCheckErrors(cudaMalloc(&d_classifyCollection[i], subranges[i]*dimensions*sizeof(float)));
@@ -216,7 +205,7 @@ void cuda_knn(int K, int dimensions, float *h_teachingCollection, int *h_teached
 		cudaCheckErrors(cudaMemcpyAsync(d_teachedClasses[i], h_teachedClasses, teachingCollectionCount*sizeof(int), cudaMemcpyHostToDevice, streams[i]));
 		
 		// Kernel launches
-		countDistances<<<blocksPerGrid, threadsPerBlock, 0, streams[i]>>>(dimensions, d_teachingCollection[i], teachingCollectionCount, d_classifyCollection[i], subranges[i], d_distances[i], d_nearestIndexes[i], d_nearestDistances[i], K, d_classCounters[i], d_teachedClasses[i], d_result[i]);
+		KNN_kernel<<<blocksPerGrid, threadsPerBlock, 0, streams[i]>>>(dimensions, d_teachingCollection[i], teachingCollectionCount, d_classifyCollection[i], subranges[i], d_distances[i], d_nearestIndexes[i], d_nearestDistances[i], K, d_classCounters[i], d_teachedClasses[i], d_result[i]);
 
 		// Copying result back to host memory
 		cudaCheckErrors(cudaMemcpyAsync(h_classifiedClasses+subrangesSum, d_result[i], subranges[i]*sizeof(int), cudaMemcpyDeviceToHost, streams[i]));
