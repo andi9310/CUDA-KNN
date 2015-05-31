@@ -108,9 +108,9 @@ __global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachi
 	int tId = blockIdx.x*blockDim.x+threadIdx.x;
 	int pointId = tId*dimensions;	
 	int l;
-	for (l = 0; l*blockDim.x<teachingCollectionCount;l++)
+	for (l = 0; l*blockDim.x<teachingCollectionCount;l++) 
 	{
-		for (int i = 0; i < dimensions; i++)
+		for (int i = 0; i < dimensions; i++) //each thread fetches one point from teachingCollection to shared memory
 		{
 			s_TeachingCollection[dimensions*threadIdx.x+i] = teachingCollection[l*blockDim.x*dimensions+threadIdx.x*dimensions+i];
 		}
@@ -140,7 +140,7 @@ __global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachi
 		int pointsLeft = teachingCollectionCount-(l-1)*blockDim.x;
 		if (threadIdx.x < pointsLeft)
 		{
-			for (int i = 0; i < dimensions; ++i)
+			for (int i = 0; i < dimensions; ++i) //each thread fetches one point from teachingCollection to shared memory
 			{
 				s_TeachingCollection[dimensions*threadIdx.x+i] = teachingCollection[l*blockDim.x*dimensions+threadIdx.x*dimensions+i];
 			}
