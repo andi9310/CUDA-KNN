@@ -2,7 +2,6 @@
 //#define DEBUG_KERNEL
 
 #include <iostream>
-#include <cstdio>
 
 #include "utils.h"
 #include "datatypes.h"
@@ -33,7 +32,7 @@ int getNumberOfGpus()
 void getGpusProperties(GpuProperties *properties)
 {
 	int n = getNumberOfGpus();
-	for (int i=0; i<n; i++)
+	for (int i=0; i<n; ++i)
 	{
 		cudaDeviceProp prop;
 		cudaCheckErrors(cudaGetDeviceProperties(&prop, i));
@@ -70,11 +69,11 @@ void printCudaMem()
 __device__ int findSlot(int distanceToClassify, float *myNearestDistances, int *myNearestIndexes, int K, int i)
 {
 	int j;
-	for (j=0; j<i; j++)
+	for (j=0; j<i; ++j)
 	{
 		if (distanceToClassify<myNearestDistances[j])
 		{
-			for (int k=K-1; k>j; k--)
+			for (int k=K-1; k>j; --k)
 			{
 				myNearestDistances[k]=myNearestDistances[k-1];
 				myNearestIndexes[k]=myNearestIndexes[k-1];
@@ -108,9 +107,9 @@ __global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachi
 	int tId = blockIdx.x*blockDim.x+threadIdx.x;
 	int pointId = tId*dimensions;	
 	int l;
-	for (l = 0; l*blockDim.x<teachingCollectionCount;l++) 
+	for (l = 0; l*blockDim.x<teachingCollectionCount;++l) 
 	{
-		for (int i = 0; i < dimensions; i++) //each thread fetches one point from teachingCollection to shared memory
+		for (int i = 0; i < dimensions; ++i) //each thread fetches one point from teachingCollection to shared memory
 		{
 			s_TeachingCollection[dimensions*threadIdx.x+i] = teachingCollection[l*blockDim.x*dimensions+threadIdx.x*dimensions+i];
 		}
@@ -135,6 +134,7 @@ __global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachi
 		}
 	}
 	__syncthreads();
+	
 	if (l*blockDim.x>=teachingCollectionCount) //last part of teachingCollection
 	{
 		int pointsLeft = teachingCollectionCount-(l-1)*blockDim.x;
@@ -176,44 +176,44 @@ __global__ void KNN_kernel(int dimensions, float *teachingCollection, int teachi
 	float *myNearestDistances = nearestDistances+K*tId;
 	float *myDistances = distances + tId * teachingCollectionCount;
 	
-	int firstDistanceToPut = myDistances[0];
+	int distanceToPut = myDistances[0];
 	for (int i=0; i<K-1; ++i)
 	{
-		int distanceToPut = myDistances[i+1];
-		int j = findSlot(firstDistanceToPut, myNearestDistances, myNearestIndexes, K, i);
+		int nextDistanceToPut = myDistances[i+1];
+		int j = findSlot(distanceToPut, myNearestDistances, myNearestIndexes, K, i);
 		
 		if (j==i)
 		{
-			myNearestDistances[j]=firstDistanceToPut;
+			myNearestDistances[j]=distanceToPut;
 			myNearestIndexes[j]=i;
 		}
-		firstDistanceToPut=distanceToPut;
+		distanceToPut=nextDistanceToPut;
 	}
 	//one iteration more
-	int j = findSlot(firstDistanceToPut, myNearestDistances, myNearestIndexes, K, K-1);	
+	int j = findSlot(distanceToPut, myNearestDistances, myNearestIndexes, K, K-1);	
 	if (j==K-1)
 	{
-		myNearestDistances[j]=firstDistanceToPut;
+		myNearestDistances[j]=distanceToPut;
 		myNearestIndexes[j]=K-1;
 	}
 	
-	firstDistanceToPut = myDistances[K];
+	distanceToPut = myDistances[K];
 	for (int i=K; i<teachingCollectionCount-1;++i)
 	{
-		int distanceToPut = myDistances[i+1];
-		findSlot(firstDistanceToPut, myNearestDistances, myNearestIndexes, K, i);
-		firstDistanceToPut = distanceToPut;
+		int nextDistanceToPut = myDistances[i+1];
+		findSlot(distanceToPut, myNearestDistances, myNearestIndexes, K, i);
+		distanceToPut = nextDistanceToPut;
 	}
-	findSlot(firstDistanceToPut, myNearestDistances, myNearestIndexes, K, teachingCollectionCount-1);
+	findSlot(distanceToPut, myNearestDistances, myNearestIndexes, K, teachingCollectionCount-1);
 
 	int classIndex = tId*MAX_CLASS_NUMBER+teachedClasses[nearestIndexes[tId*K]];
 	for(int i = 0; i < K-1; ++i)
 	{
 		int nextClassIndex = tId*MAX_CLASS_NUMBER+teachedClasses[nearestIndexes[i+1+tId*K]];
-		classCounters[classIndex]++;
+		++classCounters[classIndex];
 		classIndex = nextClassIndex;
 	}
-	classCounters[classIndex]++;
+	++classCounters[classIndex];
 
 
 	int maxIndex = 0, maxValue = classCounters[tId*MAX_CLASS_NUMBER];
